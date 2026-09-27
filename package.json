@@ -1,0 +1,36 @@
+{
+  "name": "quota-reset-planner",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "dev": "vite",
+    "prebuild": "node scripts/clean-dist.mjs",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --pretty false",
+    "test:complex": "vitest run tests/solver.complex.test.ts",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:all": "npm run test:complex && npm run test && npm run build && npm run test:e2e"
+  },
+  "dependencies": {
+    "@js-temporal/polyfill": "0.5.1",
+    "highs": "1.15.3",
+    "idb": "8.0.3",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.1",
+    "@types/node": "24.3.0",
+    "@types/react": "19.1.16",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "5.0.2",
+    "typescript": "5.9.2",
+    "vite": "7.3.6",
+    "vite-plugin-pwa": "1.0.3",
+    "vitest": "5.0.2"
+  }
+}

@@ -1,0 +1,70 @@
+import type { PlannerInput } from "./types";
+
+export function createDemoInput(): PlannerInput {
+  return {
+    schemaVersion: 1,
+    timezone: "Asia/Shanghai",
+    horizonStart: "2026-09-24T00:00:00+08:00",
+    horizonEnd: "2026-10-05T00:00:00+08:00",
+    quota: {
+      capacity: 1,
+      initialBalance: 1,
+      nextNaturalResetAt: "2026-10-01T00:00:00+08:00",
+      cycleHours: 168,
+      fullUseDays: 2.5,
+      sensitivityDays: [2, 2.5, 3]
+    },
+    cards: [
+      {
+        id: "card-a",
+        name: "10 月 4 日到期卡",
+        availableAt: "2026-09-24T00:00:00+08:00",
+        expiresAt: "2026-10-04T00:00:00+08:00",
+        resetsNaturalClock: true
+      },
+      {
+        id: "card-b",
+        name: "10 月 10 日到期卡",
+        availableAt: "2026-09-24T00:00:00+08:00",
+        expiresAt: "2026-10-10T00:00:00+08:00",
+        resetsNaturalClock: true
+      }
+    ],
+    tasks: [
+      {
+        id: "important-project",
+        name: "高价值项目冲刺",
+        availableAt: "2026-09-29T00:00:00+08:00",
+        deadlineAt: "2026-10-04T00:00:00+08:00",
+        quotaDemand: 1.2,
+        valuePerQuota: 5,
+        note: "示例任务，请替换为自己的任务。"
+      }
+    ],
+    eventGroups: [
+      {
+        id: "devday-reset",
+        name: "9 月 29 日可能额外重置",
+        outcomes: [
+          {
+            id: "devday-happens",
+            name: "发生额外重置",
+            at: "2026-09-29T00:00:00+08:00",
+            resetsAllowance: true,
+            resetsNaturalClock: true,
+            probability: null
+          },
+          {
+            id: "devday-none",
+            name: "未发生",
+            at: null,
+            resetsAllowance: false,
+            resetsNaturalClock: false,
+            probability: null
+          }
+        ]
+      }
+    ],
+    options: { stepMinutes: 60, timeLimitSeconds: 15, scenarioLimit: 16 }
+  };
+}
