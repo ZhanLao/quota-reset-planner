@@ -37,9 +37,8 @@ export function validatePlannerInput(input: PlannerInput): ValidationIssue[] {
   }
 
   const quota = input.quota;
-  if (!(quota.capacity > 0)) add("quota.capacity", "INVALID_CAPACITY", "额度容量必须大于 0。");
-  if (quota.initialBalance < 0 || quota.initialBalance > quota.capacity) {
-    add("quota.initialBalance", "INVALID_BALANCE", "当前余额必须位于 0 与容量之间。");
+  if (quota.initialRemainingPercent < 0 || quota.initialRemainingPercent > 100) {
+    add("quota.initialRemainingPercent", "INVALID_BALANCE", "当前剩余额度必须位于 0% 与 100% 之间。");
   }
   if (!isFiniteInstant(quota.nextNaturalResetAt)) {
     add("quota.nextNaturalResetAt", "INVALID_TIME", "下一自然重置不是有效时刻。");
@@ -71,6 +70,15 @@ export function validatePlannerInput(input: PlannerInput): ValidationIssue[] {
     }
   });
 
+  input.forcedResets.forEach((reset, index) => {
+    const path = `forcedResets.${index}`;
+    claimId(reset.id, `${path}.id`);
+    if (!isFiniteInstant(reset.at)) add(`${path}.at`, "INVALID_TIME", "强制重置时刻无效。");
+    else if (instant(reset.at) < start || instant(reset.at) >= end) {
+      add(`${path}.at`, "RESET_OUTSIDE_HORIZON", "强制重置必须位于规划区间 [起点, 终点) 内。");
+    }
+  });
+
   input.tasks.forEach((task, index) => {
     const path = `tasks.${index}`;
     claimId(task.id, `${path}.id`);
@@ -79,7 +87,7 @@ export function validatePlannerInput(input: PlannerInput): ValidationIssue[] {
     } else if (instant(task.deadlineAt) <= instant(task.availableAt)) {
       add(`${path}.deadlineAt`, "INVALID_RANGE", "任务截止时刻必须晚于可开始时刻。");
     }
-    if (!(task.quotaDemand > 0)) add(`${path}.quotaDemand`, "INVALID_DEMAND", "任务需求额度必须大于 0。");
+    if (!(task.quotaDemandPercent > 0)) add(`${path}.quotaDemandPercent`, "INVALID_DEMAND", "任务需求百分比必须大于 0。");
     if (!(task.valuePerQuota >= 1)) add(`${path}.valuePerQuota`, "INVALID_VALUE", "任务价值必须至少为 1。");
   });
 

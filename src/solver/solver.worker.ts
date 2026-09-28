@@ -8,7 +8,7 @@ const workerScope: DedicatedWorkerGlobalScope = self as unknown as DedicatedWork
 workerScope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   if (event.data.type !== "solve") return;
   try {
-    const result = await solvePlanner(event.data.input, event.data.inputRevision, (progress) => {
+    const result = await solvePlanner(event.data.input, event.data.inputRevision, event.data.includeSensitivity ?? false, (progress) => {
       const message: WorkerResponse = { type: "progress", progress };
       workerScope.postMessage(message);
     });

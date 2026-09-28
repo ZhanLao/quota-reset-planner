@@ -40,6 +40,7 @@ input:focus, select:focus { border-color: var(--amber-dark); box-shadow: 0 0 0 3
 .banner { margin: 1rem 0; border-radius: 12px; padding: 0.9rem 1rem; font-weight: 600; }
 .danger-banner { background: #f8ded9; color: #7c2823; }
 .stale-banner { background: #fff0ca; color: #78520d; }
+.info-banner { display: flex; align-items: center; justify-content: space-between; gap: 1rem; background: #dfeee8; color: #245044; }
 .status-strip { display: flex; align-items: center; gap: 0.6rem; min-height: 3rem; font: 500 0.78rem "Cascadia Mono", "Consolas", monospace; color: rgba(23, 51, 50, 0.72); }
 .dot, .pulse { width: 0.58rem; height: 0.58rem; border-radius: 50%; background: #5d8d78; }
 .pulse { animation: pulse 1.3s ease-in-out infinite; }
@@ -66,6 +67,20 @@ main { display: grid; gap: 1.25rem; }
 .check-row, .mini-check { display: flex; align-items: center; gap: 0.55rem; margin-top: 0.9rem; font-size: 0.86rem; }
 .check-row input, .mini-check input { width: auto; accent-color: var(--ink); }
 .event-card { border-left: 4px solid var(--amber); }
+.forced-card { border-left: 4px solid #5d8d78; }
+.reset-choice-grid { display: grid; grid-template-columns: minmax(18rem, 0.75fr) minmax(0, 1.25fr); gap: 1rem; }
+.quick-reset-card { align-self: start; border-radius: 15px; padding: 1rem; background: #e0eee7; border: 1px solid rgba(36, 80, 68, 0.18); }
+.quick-reset-card h3, .card-plan h4 { margin-top: 0; }
+.quick-reset-card p { color: rgba(23, 51, 50, 0.68); font-size: 0.84rem; line-height: 1.6; }
+.quick-reset-card button { width: 100%; margin-top: 0.9rem; }
+.empty-copy { margin: 0.7rem 0; color: rgba(23, 51, 50, 0.62); font-size: 0.86rem; }
+.collapsible-panel > summary { list-style: none; cursor: pointer; }
+.collapsible-panel > summary::-webkit-details-marker { display: none; }
+.collapsible-panel > summary .section-head { margin-bottom: 0; }
+.collapsible-panel[open] > summary .section-head { margin-bottom: 1.4rem; }
+.collapsible-panel summary b { padding: 0.35rem 0.7rem; border-radius: 999px; background: rgba(23, 51, 50, 0.08); font-size: 0.78rem; white-space: nowrap; }
+.advanced-content { display: grid; gap: 1rem; }
+.advanced-content > button { justify-self: end; }
 .outcome-row { display: grid; grid-template-columns: 1.2fr 1.2fr 0.65fr auto auto auto; align-items: end; gap: 0.65rem; padding: 0.8rem 0; border-top: 1px dashed var(--line); }
 .mini-check { padding-bottom: 0.7rem; white-space: nowrap; }
 .model-count { display: flex; flex-direction: column; gap: 0.35rem; border: 1px solid var(--line); border-radius: 10px; padding: 0.68rem 0.78rem; }
@@ -97,6 +112,12 @@ main { display: grid; gap: 1.25rem; }
 .recommendation span { color: rgba(61,42,8,0.66); }
 .recommendation strong, .recommendation small { display: block; margin-top: 0.25rem; }
 .warning-line { color: #f8dcae; font-size: 0.75rem; }
+.card-plan { margin-top: 1rem; padding: 0.9rem; border-radius: 12px; background: rgba(255,255,255,0.07); }
+.card-plan .empty-copy { color: rgba(255,255,255,0.64); }
+.table-scroll { overflow-x: auto; }
+.card-plan table { min-width: 42rem; }
+.card-plan th, .card-plan td { border-color: rgba(255,255,255,0.12); }
+.card-plan th { color: rgba(255,255,255,0.55); }
 .scenario-list { display: grid; gap: 0.55rem; margin-top: 1rem; }
 .scenario-list details { border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; overflow: hidden; }
 .scenario-list summary { display: flex; justify-content: space-between; gap: 1rem; cursor: pointer; padding: 0.75rem; font-size: 0.82rem; }
@@ -120,6 +141,7 @@ footer { padding: 2rem 0 0; color: rgba(23, 51, 50, 0.55); font-size: 0.78rem; t
   .hero-actions { justify-content: flex-start; }
   .outcome-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .result-stack { grid-template-columns: 1fr; }
+  .reset-choice-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {

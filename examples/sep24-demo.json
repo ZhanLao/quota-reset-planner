@@ -1,15 +1,14 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "inputRevision": 1,
   "updatedAt": "2026-09-24T00:00:00.000Z",
   "input": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "timezone": "Asia/Shanghai",
     "horizonStart": "2026-09-24T00:00:00+08:00",
     "horizonEnd": "2026-10-05T00:00:00+08:00",
     "quota": {
-      "capacity": 1,
-      "initialBalance": 1,
+      "initialRemainingPercent": 100,
       "nextNaturalResetAt": "2026-10-01T00:00:00+08:00",
       "cycleHours": 168,
       "fullUseDays": 2.5,
@@ -19,8 +18,9 @@
       { "id": "card-a", "name": "10 月 4 日到期卡", "availableAt": "2026-09-24T00:00:00+08:00", "expiresAt": "2026-10-04T00:00:00+08:00", "resetsNaturalClock": true },
       { "id": "card-b", "name": "10 月 10 日到期卡", "availableAt": "2026-09-24T00:00:00+08:00", "expiresAt": "2026-10-10T00:00:00+08:00", "resetsNaturalClock": true }
     ],
+    "forcedResets": [],
     "tasks": [
-      { "id": "important-project", "name": "高价值项目冲刺", "availableAt": "2026-09-29T00:00:00+08:00", "deadlineAt": "2026-10-04T00:00:00+08:00", "quotaDemand": 1.2, "valuePerQuota": 5, "note": "匿名演示任务" }
+      { "id": "important-project", "name": "高价值项目冲刺", "availableAt": "2026-09-29T00:00:00+08:00", "deadlineAt": "2026-10-04T00:00:00+08:00", "quotaDemandPercent": 120, "valuePerQuota": 5, "note": "匿名演示任务" }
     ],
     "eventGroups": [
       {

@@ -2,6 +2,7 @@ import loadHighs from "highs";
 import highsWasmUrl from "highs/runtime?url";
 import { PlannerError } from "../domain/errors";
 import type {
+  CardUsagePlanItem,
   PlannerInput,
   PolicyAction,
   ScenarioMetrics,
@@ -19,8 +20,8 @@ import {
   type Expression
 } from "./model-builder";
 import { compilePlanningModel, type CompiledPlanningModel } from "./planning-model";
-import { exogenousEventAt } from "./scenarios";
-import { durationDays, toIso } from "./time-grid";
+import { conditionLabel, exogenousEventAt } from "./scenarios";
+import { HOUR_MS, toIso } from "./time-grid";
 
 interface RawColumn {
   Primal: number;
@@ -121,51 +122,85 @@ function buildScenarioMetrics(
     const timeline: TimelineEvent[] = [];
     const cardsUsed = new Set<string>();
     const taskUsage: Record<string, number> = {};
+    let nextNatural = Date.parse(compiled.input.quota.nextNaturalResetAt);
     for (let timeIndex = 0; timeIndex < intervalCount; timeIndex += 1) {
       const at = compiled.grid[timeIndex];
+      const qInPercent = primal(columns, compiled.qInVariables[scenarioIndex][timeIndex]) * 100;
+      let balanceBeforeManualPercent = qInPercent;
       if (primal(columns, compiled.naturalVariables[scenarioIndex][timeIndex]) > 0.5) {
+        nextNatural = at + compiled.input.quota.cycleHours * HOUR_MS;
         timeline.push({
           at: toIso(at),
           kind: "natural-reset",
           title: "自然重置",
-          detail: "余额被覆盖为满额，并从本时刻重新计算自然周期。"
+          detail: `余额覆盖为 100%，下一自然重置改为 ${toIso(nextNatural)}。`,
+          balanceBeforePercent: qInPercent,
+          overwrittenPercent: qInPercent,
+          nextNaturalResetAt: toIso(nextNatural)
         });
+        balanceBeforeManualPercent = 100;
       }
       const event = exogenousEventAt(compiled.input, scenario, at);
+      if (event.forcedNames.length) {
+        if (event.forcedResetsNaturalClock) nextNatural = at + compiled.input.quota.cycleHours * HOUR_MS;
+        timeline.push({
+          at: toIso(at),
+          kind: "forced-reset",
+          title: event.forcedNames.join("；"),
+          detail: event.forcedResetsNaturalClock
+            ? `强制覆盖为 100%，下一自然重置改为 ${toIso(nextNatural)}。`
+            : `强制覆盖为 100%，下一自然重置仍为 ${toIso(nextNatural)}。`,
+          balanceBeforePercent: balanceBeforeManualPercent,
+          overwrittenPercent: balanceBeforeManualPercent,
+          nextNaturalResetAt: toIso(nextNatural)
+        });
+        balanceBeforeManualPercent = 100;
+      }
       if (event.names.length) {
+        if (event.uncertainResetsNaturalClock) nextNatural = at + compiled.input.quota.cycleHours * HOUR_MS;
         timeline.push({
           at: toIso(at),
           kind: "extra-reset",
           title: event.names.join("；"),
-          detail: event.resetsAllowance
-            ? `额外事件刷新额度${event.resetsNaturalClock ? "并重开自然时钟" : "，但不改变自然时钟"}。`
+          detail: event.uncertainResetsAllowance
+            ? `额外事件覆盖为 100%，下一自然重置${event.uncertainResetsNaturalClock ? `改为 ${toIso(nextNatural)}` : `仍为 ${toIso(nextNatural)}`}。`
             : "本情景在此时刻观察到事件结果，但没有刷新额度。"
         });
+        if (event.uncertainResetsAllowance) balanceBeforeManualPercent = 100;
       }
       const node = compiled.nodeByScenarioAndTime[scenarioIndex][timeIndex];
       node.cardVariables.forEach((variable, cardIndex) => {
         if (primal(columns, variable) > 0.5) {
           const card = compiled.input.cards[cardIndex];
           cardsUsed.add(card.id);
+          if (card.resetsNaturalClock) nextNatural = at + compiled.input.quota.cycleHours * HOUR_MS;
           timeline.push({
             at: toIso(at),
             kind: "use-card",
             title: `使用：${card.name}`,
-            detail: card.resetsNaturalClock ? "覆盖当前余额，并把下一自然重置改为本时刻加一个周期。" : "覆盖当前余额，不改变自然时钟。"
+            detail: card.resetsNaturalClock
+              ? `覆盖为 100%，下一自然重置改为 ${toIso(nextNatural)}。`
+              : `覆盖为 100%，下一自然重置仍为 ${toIso(nextNatural)}。`,
+            balanceBeforePercent: balanceBeforeManualPercent,
+            overwrittenPercent: balanceBeforeManualPercent,
+            nextNaturalResetAt: toIso(nextNatural),
+            cardId: card.id
           });
+          balanceBeforeManualPercent = 100;
         }
       });
       node.taskVariables.forEach((variable, taskIndex) => {
         const amount = primal(columns, variable);
         if (amount <= 1e-8) return;
         const task = compiled.tasks[taskIndex];
-        taskUsage[task.id] = (taskUsage[task.id] ?? 0) + amount;
+        const percent = amount * 100;
+        taskUsage[task.id] = (taskUsage[task.id] ?? 0) + percent;
         timeline.push({
           at: toIso(at),
           kind: "work",
           title: task.name,
-          detail: `本时段使用 ${amount.toFixed(4)} 份额度。`,
-          quotaAmount: amount
+          detail: `本时段使用 ${percent.toFixed(2)}%。`,
+          quotaAmountPercent: percent
         });
       });
     }
@@ -173,12 +208,14 @@ function buildScenarioMetrics(
       scenarioId: scenario.id,
       scenarioName: scenario.name,
       probability: scenario.probability,
-      weightedValue: valueOf(compiled.utilityByScenario[scenarioIndex], columns),
-      totalUsed: valueOf(compiled.usageByScenario[scenarioIndex], columns),
-      overwrittenBalance: valueOf(compiled.overwrittenByScenario[scenarioIndex], columns),
+      weightedTaskValue: compiled.input.tasks.reduce((sum, task, taskIndex) => (
+        sum + valueOf(compiled.taskUsageByScenario[scenarioIndex][taskIndex], columns) * 100 * task.valuePerQuota
+      ), 0),
+      totalUsedPercent: valueOf(compiled.usageByScenario[scenarioIndex], columns) * 100,
+      overwrittenPercent: valueOf(compiled.overwrittenByScenario[scenarioIndex], columns) * 100,
       cardsUsed: [...cardsUsed],
       unusedCards: compiled.input.cards.filter((card) => !cardsUsed.has(card.id)).map((card) => card.id),
-      taskUsage,
+      taskUsagePercent: taskUsage,
       timeline
     };
   });
@@ -195,8 +232,34 @@ function buildPolicy(compiled: CompiledPlanningModel, columns: Record<string, Ra
       return quota > 1e-8 ? [{ taskId: compiled.tasks[taskIndex].id, quota }] : [];
     });
     if (!cardId && !allocations.length) return [];
-    return [{ at: toIso(node.at), condition: node.condition, cardId, allocations }];
+    const card = cardId ? compiled.input.cards.find((candidate) => candidate.id === cardId) : undefined;
+    return [{
+      at: toIso(node.at),
+      condition: node.condition,
+      conditionLabel: conditionLabel(compiled.input, node.condition),
+      cardId,
+      cardName: card?.name,
+      allocations: allocations.map((allocation) => ({ taskId: allocation.taskId, quotaPercent: allocation.quota * 100 }))
+    }];
   });
+}
+
+function buildCardUsagePlan(policy: PolicyAction[], scenarios: ScenarioMetrics[]): CardUsagePlanItem[] {
+  return policy.flatMap((action) => {
+    if (!action.cardId || !action.cardName) return [];
+    const event = scenarios
+      .flatMap((scenario) => scenario.timeline)
+      .find((candidate) => candidate.kind === "use-card" && candidate.at === action.at && candidate.cardId === action.cardId);
+    return [{
+      at: action.at,
+      cardId: action.cardId,
+      cardName: action.cardName,
+      conditionLabel: action.conditionLabel,
+      balanceBeforePercent: event?.balanceBeforePercent ?? 0,
+      overwrittenPercent: event?.overwrittenPercent ?? 0,
+      nextNaturalResetAt: event?.nextNaturalResetAt ?? null
+    }];
+  }).sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
 }
 
 function safeMipGap(raw: RawSolveResult): number | null {
@@ -210,13 +273,14 @@ export async function solveOne(input: PlannerInput, mode: SolveMode, fullUseDays
   const compiled = compilePlanningModel(input, mode, fullUseDays);
   const { raw, allOptimal } = await solveLexicographic(compiled);
   const scenarios = buildScenarioMetrics(compiled, raw.Columns);
-  const expectedValue = scenarios.every((scenario) => scenario.probability !== null)
-    ? scenarios.reduce((sum, scenario) => sum + scenario.weightedValue * (scenario.probability ?? 0), 0)
+  const expectedUsedPercent = scenarios.every((scenario) => scenario.probability !== null)
+    ? scenarios.reduce((sum, scenario) => sum + scenario.totalUsedPercent * (scenario.probability ?? 0), 0)
     : null;
-  const worstCaseValue = Math.min(...scenarios.map((scenario) => scenario.weightedValue));
-  const totalUsed = mode === "expected" && scenarios.every((scenario) => scenario.probability !== null)
-    ? scenarios.reduce((sum, scenario) => sum + scenario.totalUsed * (scenario.probability ?? 0), 0)
-    : Math.min(...scenarios.map((scenario) => scenario.totalUsed));
+  const worstCaseUsedPercent = Math.min(...scenarios.map((scenario) => scenario.totalUsedPercent));
+  const totalUsedPercent = mode === "expected" && expectedUsedPercent !== null
+    ? expectedUsedPercent
+    : worstCaseUsedPercent;
+  const policy = buildPolicy(compiled, raw.Columns);
   const warnings = [
     `手动用卡时刻按 ${input.options.stepMinutes} 分钟网格枚举；输入事件边界保持精确。`
   ];
@@ -229,14 +293,18 @@ export async function solveOne(input: PlannerInput, mode: SolveMode, fullUseDays
     mipGap: safeMipGap(raw),
     durationMs: performance.now() - started,
     gridPoints: compiled.grid.length,
+    scenarioCount: compiled.scenarios.length,
+    solvePasses: compiled.objectiveTiers.length,
     stepMinutes: input.options.stepMinutes,
     fullUseDays,
-    objectiveValue: mode === "expected" ? expectedValue ?? worstCaseValue : worstCaseValue,
-    totalUsed,
-    worstCaseValue,
-    expectedValue,
+    objectiveValue: totalUsedPercent,
+    totalUsedPercent,
+    equivalentFullQuotas: totalUsedPercent / 100,
+    worstCaseUsedPercent,
+    expectedUsedPercent,
     scenarios,
-    policy: buildPolicy(compiled, raw.Columns),
+    policy,
+    cardUsagePlan: buildCardUsagePlan(policy, scenarios),
     warnings
   };
 }
@@ -244,32 +312,29 @@ export async function solveOne(input: PlannerInput, mode: SolveMode, fullUseDays
 export async function solvePlanner(
   input: PlannerInput,
   inputRevision: number,
+  includeSensitivity = false,
   onProgress?: (progress: SolverProgress) => void
 ): Promise<SolveBundle> {
   const issues = validatePlannerInput(input);
   if (issues.length) {
     throw new PlannerError("INPUT_INVALID", "输入参数未通过校验。", issues.map((issue) => `${issue.path}: ${issue.message}`));
   }
-  const sensitivityDays = [...new Set([input.quota.fullUseDays, ...input.quota.sensitivityDays])].sort((a, b) => a - b);
-  const hasExpected = hasCompleteProbabilities(input);
-  const total = sensitivityDays.length + (hasExpected ? 1 : 0);
-  let completed = 0;
-  onProgress?.({ phase: "计算主保底策略", completed, total });
-  const robustPrimary = await solveOne(input, "robust", input.quota.fullUseDays);
-  completed += 1;
-  onProgress?.({ phase: hasExpected ? "计算主期望策略" : "计算速度敏感性", completed, total });
-  const expected = hasExpected ? await solveOne(input, "expected", input.quota.fullUseDays) : null;
-  if (expected) completed += 1;
-
-  const sensitivity: SolveResult[] = [robustPrimary];
-  for (const days of sensitivityDays) {
-    if (days === input.quota.fullUseDays) continue;
-    onProgress?.({ phase: `敏感性：${days} 天用完一份`, completed, total });
-    sensitivity.push(await solveOne(input, "robust", days));
-    completed += 1;
+  const plan = planSolveRuns(input, includeSensitivity);
+  let robustPrimary: SolveResult | null = null;
+  let expected: SolveResult | null = null;
+  const sensitivity: SolveResult[] = [];
+  for (let index = 0; index < plan.length; index += 1) {
+    const item = plan[index];
+    onProgress?.({ phase: item.label, completed: index, total: plan.length });
+    const result = await solveOne(input, item.mode, item.fullUseDays);
+    if (item.purpose === "primary") robustPrimary = result;
+    else if (item.purpose === "expected") expected = result;
+    else sensitivity.push(result);
   }
+  if (!robustPrimary) throw new PlannerError("INPUT_INVALID", "求解计划缺少主策略。");
+  if (includeSensitivity) sensitivity.unshift(robustPrimary);
   sensitivity.sort((left, right) => left.fullUseDays - right.fullUseDays);
-  onProgress?.({ phase: "完成", completed: total, total });
+  onProgress?.({ phase: "完成", completed: plan.length, total: plan.length });
   return {
     inputRevision,
     generatedAt: new Date().toISOString(),
@@ -280,18 +345,48 @@ export async function solvePlanner(
   };
 }
 
+export interface PlannedSolveRun {
+  mode: SolveMode;
+  fullUseDays: number;
+  purpose: "primary" | "expected" | "sensitivity";
+  label: string;
+}
+
+export function planSolveRuns(input: PlannerInput, includeSensitivity: boolean): PlannedSolveRun[] {
+  const plan: PlannedSolveRun[] = [{
+    mode: "robust",
+    fullUseDays: input.quota.fullUseDays,
+    purpose: "primary",
+    label: input.eventGroups.length ? "计算主保底策略" : "计算确定性主策略"
+  }];
+  if (input.eventGroups.length > 0 && hasCompleteProbabilities(input)) {
+    plan.push({ mode: "expected", fullUseDays: input.quota.fullUseDays, purpose: "expected", label: "计算主期望策略" });
+  }
+  if (includeSensitivity) {
+    [...new Set(input.quota.sensitivityDays)]
+      .filter((days) => days !== input.quota.fullUseDays)
+      .sort((left, right) => left - right)
+      .forEach((days) => plan.push({ mode: "robust", fullUseDays: days, purpose: "sensitivity", label: `速度对比：${days} 天用完 100%` }));
+  }
+  return plan;
+}
+
 export function estimateModel(input: PlannerInput): {
   gridPoints: number;
   scenarios: number;
   variables: number;
   constraints: number;
+  objectivePasses: number;
+  strategyRuns: number;
 } {
   const compiled = compilePlanningModel(input, "robust", input.quota.fullUseDays);
   return {
     gridPoints: compiled.grid.length,
     scenarios: compiled.scenarios.length,
     variables: compiled.estimatedVariables,
-    constraints: compiled.estimatedConstraints
+    constraints: compiled.estimatedConstraints,
+    objectivePasses: compiled.objectiveTiers.length,
+    strategyRuns: planSolveRuns(input, false).length
   };
 }
 

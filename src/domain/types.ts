@@ -3,8 +3,7 @@ export type SolveMode = "expected" | "robust";
 export type SolveStatus = "optimal" | "feasible" | "cancelled" | "error";
 
 export interface QuotaSettings {
-  capacity: number;
-  initialBalance: number;
+  initialRemainingPercent: number;
   nextNaturalResetAt: IsoInstant;
   cycleHours: number;
   fullUseDays: number;
@@ -19,12 +18,19 @@ export interface ResetCard {
   resetsNaturalClock: boolean;
 }
 
+export interface ForcedReset {
+  id: string;
+  name: string;
+  at: IsoInstant;
+  resetsNaturalClock: boolean;
+}
+
 export interface Task {
   id: string;
   name: string;
   availableAt: IsoInstant;
   deadlineAt: IsoInstant;
-  quotaDemand: number;
+  quotaDemandPercent: number;
   valuePerQuota: number;
   note?: string;
 }
@@ -51,12 +57,13 @@ export interface SolverOptions {
 }
 
 export interface PlannerInput {
-  schemaVersion: 1;
+  schemaVersion: 2;
   timezone: string;
   horizonStart: IsoInstant;
   horizonEnd: IsoInstant;
   quota: QuotaSettings;
   cards: ResetCard[];
+  forcedResets: ForcedReset[];
   tasks: Task[];
   eventGroups: EventGroup[];
   options: SolverOptions;
@@ -75,34 +82,50 @@ export interface Scenario {
   probability: number | null;
 }
 
-export type TimelineEventKind = "natural-reset" | "extra-reset" | "use-card" | "work";
+export type TimelineEventKind = "natural-reset" | "forced-reset" | "extra-reset" | "use-card" | "work";
 
 export interface TimelineEvent {
   at: IsoInstant;
   kind: TimelineEventKind;
   title: string;
   detail: string;
-  quotaAmount?: number;
+  quotaAmountPercent?: number;
+  balanceBeforePercent?: number;
+  overwrittenPercent?: number;
+  nextNaturalResetAt?: IsoInstant;
+  cardId?: string;
 }
 
 export interface ScenarioMetrics {
   scenarioId: string;
   scenarioName: string;
   probability: number | null;
-  weightedValue: number;
-  totalUsed: number;
-  overwrittenBalance: number;
+  weightedTaskValue: number;
+  totalUsedPercent: number;
+  overwrittenPercent: number;
   cardsUsed: string[];
   unusedCards: string[];
-  taskUsage: Record<string, number>;
+  taskUsagePercent: Record<string, number>;
   timeline: TimelineEvent[];
 }
 
 export interface PolicyAction {
   at: IsoInstant;
   condition: string;
+  conditionLabel: string;
   cardId?: string;
-  allocations: Array<{ taskId: string; quota: number }>;
+  cardName?: string;
+  allocations: Array<{ taskId: string; quotaPercent: number }>;
+}
+
+export interface CardUsagePlanItem {
+  at: IsoInstant;
+  cardId: string;
+  cardName: string;
+  conditionLabel: string;
+  balanceBeforePercent: number;
+  overwrittenPercent: number;
+  nextNaturalResetAt: IsoInstant | null;
 }
 
 export interface SolveResult {
@@ -113,14 +136,18 @@ export interface SolveResult {
   mipGap: number | null;
   durationMs: number;
   gridPoints: number;
+  scenarioCount: number;
+  solvePasses: number;
   stepMinutes: number;
   fullUseDays: number;
   objectiveValue: number;
-  totalUsed: number;
-  worstCaseValue: number;
-  expectedValue: number | null;
+  totalUsedPercent: number;
+  equivalentFullQuotas: number;
+  worstCaseUsedPercent: number;
+  expectedUsedPercent: number | null;
   scenarios: ScenarioMetrics[];
   policy: PolicyAction[];
+  cardUsagePlan: CardUsagePlanItem[];
   warnings: string[];
 }
 
@@ -134,7 +161,7 @@ export interface SolveBundle {
 }
 
 export interface ProjectEnvelope {
-  schemaVersion: 1;
+  schemaVersion: 2;
   inputRevision: number;
   updatedAt: IsoInstant;
   input: PlannerInput;
@@ -148,7 +175,7 @@ export interface SolverProgress {
 }
 
 export type WorkerRequest =
-  | { type: "solve"; input: PlannerInput; inputRevision: number }
+  | { type: "solve"; input: PlannerInput; inputRevision: number; includeSensitivity?: boolean }
   | { type: "cancel" };
 
 export type WorkerResponse =

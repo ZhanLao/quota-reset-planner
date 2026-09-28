@@ -29,6 +29,7 @@ export function buildTimeGrid(input: PlannerInput): number[] {
     addBoundary(card.availableAt);
     addBoundary(card.expiresAt);
   });
+  input.forcedResets.forEach((reset) => addBoundary(reset.at));
   input.tasks.forEach((task) => {
     addBoundary(task.availableAt);
     addBoundary(task.deadlineAt);

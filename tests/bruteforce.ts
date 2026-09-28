@@ -9,7 +9,7 @@ interface State {
 
 export function bruteForceMaximumUsage(input: PlannerInput, fullUseDays: number): number {
   const grid = buildTimeGrid(input);
-  const capacity = input.quota.capacity;
+  const capacity = 1;
   const cycle = input.quota.cycleHours * HOUR_MS;
   const ratePerDay = capacity / fullUseDays;
   const memo = new Map<string, number>();
@@ -49,8 +49,8 @@ export function bruteForceMaximumUsage(input: PlannerInput, fullUseDays: number)
   };
 
   return visit(0, {
-    balance: input.quota.initialBalance,
+    balance: input.quota.initialRemainingPercent / 100,
     nextNatural: toMs(input.quota.nextNaturalResetAt),
     usedMask: 0
-  });
+  }) * 100;
 }

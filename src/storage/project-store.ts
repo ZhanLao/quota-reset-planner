@@ -1,7 +1,7 @@
 import { openDB, type IDBPDatabase } from "idb";
 import { PlannerError } from "../domain/errors";
 import type { PlannerInput, ProjectEnvelope } from "../domain/types";
-import { validatePlannerInput } from "../domain/validation";
+import { decodeAndMigrateEnvelope, type MigrationResult } from "./migrations";
 
 const DATABASE_NAME = "quota-reset-planner";
 const STORE_NAME = "projects";
@@ -18,18 +18,21 @@ async function database(): Promise<IDBPDatabase> {
 
 export function createEnvelope(input: PlannerInput): ProjectEnvelope {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     inputRevision: 1,
     updatedAt: new Date().toISOString(),
     input
   };
 }
 
-export async function loadProject(): Promise<{ project: ProjectEnvelope | null; persistent: boolean }> {
+export async function loadProject(): Promise<{ project: ProjectEnvelope | null; persistent: boolean; migrationNotice?: string }> {
   try {
     const db = await database();
-    const project = await db.get(STORE_NAME, ACTIVE_KEY) as ProjectEnvelope | undefined;
-    return { project: project ?? null, persistent: true };
+    const stored = await db.get(STORE_NAME, ACTIVE_KEY) as unknown;
+    if (!stored) return { project: null, persistent: true };
+    const migrated = decodeAndMigrateEnvelope(stored);
+    if (migrated.migrationNotice) await db.put(STORE_NAME, migrated.project, ACTIVE_KEY);
+    return { ...migrated, persistent: true };
   } catch {
     return { project: memoryFallback, persistent: false };
   }
@@ -57,33 +60,12 @@ export function exportProject(project: ProjectEnvelope): void {
   URL.revokeObjectURL(url);
 }
 
-export async function importProject(file: File): Promise<ProjectEnvelope> {
+export async function importProject(file: File): Promise<MigrationResult> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(await file.text());
   } catch {
     throw new PlannerError("SCHEMA_UNSUPPORTED", "文件不是有效的 JSON，当前项目未被覆盖。");
   }
-  if (!parsed || typeof parsed !== "object") {
-    throw new PlannerError("SCHEMA_UNSUPPORTED", "文件缺少项目对象，当前项目未被覆盖。");
-  }
-  const candidate = parsed as Partial<ProjectEnvelope>;
-  if (candidate.schemaVersion !== 1 || !candidate.input || candidate.input.schemaVersion !== 1) {
-    throw new PlannerError("SCHEMA_UNSUPPORTED", "只支持 schemaVersion=1 的项目文件，当前项目未被覆盖。");
-  }
-  const issues = validatePlannerInput(candidate.input);
-  if (issues.length) {
-    throw new PlannerError(
-      "INPUT_INVALID",
-      "导入文件中的参数无效，当前项目未被覆盖。",
-      issues.map((issue) => `${issue.path}: ${issue.message}`)
-    );
-  }
-  return {
-    schemaVersion: 1,
-    inputRevision: Number.isInteger(candidate.inputRevision) ? candidate.inputRevision as number : 1,
-    updatedAt: new Date().toISOString(),
-    input: candidate.input,
-    lastResult: candidate.lastResult
-  };
+  return decodeAndMigrateEnvelope(parsed);
 }

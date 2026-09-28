@@ -3,8 +3,7 @@ import type {
   PlannerInput,
   ResetCard,
   Scenario,
-  SolveMode,
-  Task
+  SolveMode
 } from "../domain/types";
 import {
   ModelBuilder,
@@ -26,13 +25,22 @@ interface ActionNode {
   taskVariables: Map<number, string>;
 }
 
+export interface NormalizedTask {
+  id: string;
+  name: string;
+  availableAt: string;
+  deadlineAt: string;
+  quotaDemand: number;
+  valuePerQuota: number;
+}
+
 export interface CompiledPlanningModel {
   builder: ModelBuilder;
   input: PlannerInput;
   mode: SolveMode;
   scenarios: Scenario[];
   grid: number[];
-  tasks: Task[];
+  tasks: NormalizedTask[];
   nodes: ActionNode[];
   nodeByScenarioAndTime: ActionNode[][];
   qInVariables: string[][];
@@ -122,13 +130,20 @@ export function compilePlanningModel(input: PlannerInput, mode: SolveMode, fullU
   const scenarios = enumerateScenarios(input);
   const grid = buildTimeGrid(input);
   const intervalCount = grid.length - 1;
-  const capacity = input.quota.capacity;
+  const capacity = 1;
   const cycleMs = input.quota.cycleHours * HOUR_MS;
   const start = grid[0];
   const end = grid[grid.length - 1];
   const generalDemand = capacity / fullUseDays * durationDays(start, end);
-  const tasks: Task[] = [
-    ...input.tasks,
+  const tasks: NormalizedTask[] = [
+    ...input.tasks.map((task) => ({
+      id: task.id,
+      name: task.name,
+      availableAt: task.availableAt,
+      deadlineAt: task.deadlineAt,
+      quotaDemand: task.quotaDemandPercent / 100,
+      valuePerQuota: task.valuePerQuota
+    })),
     {
       id: GENERAL_TASK_ID,
       name: "普通使用",
@@ -177,7 +192,7 @@ export function compilePlanningModel(input: PlannerInput, mode: SolveMode, fullU
     const overwrites: string[] = [];
     const clocks: string[] = [];
     for (let timeIndex = 0; timeIndex <= intervalCount; timeIndex += 1) {
-      const initial = timeIndex === 0 ? input.quota.initialBalance : 0;
+      const initial = timeIndex === 0 ? input.quota.initialRemainingPercent / 100 : 0;
       qIn.push(builder.addContinuous(`qi_s${scenarioIndex}_k${timeIndex}`, initial, timeIndex === 0 ? initial : capacity));
       if (timeIndex === intervalCount) break;
       qAfter.push(builder.addContinuous(`qa_s${scenarioIndex}_k${timeIndex}`, 0, capacity));
@@ -352,24 +367,38 @@ export function compilePlanningModel(input: PlannerInput, mode: SolveMode, fullU
       addExpression(expectedEarly, earlyByScenario[scenarioIndex], scenario.probability);
       addExpression(expectedCards, cardsByScenario[scenarioIndex], scenario.probability);
     });
+    // 总使用量是主目标；任务价值只能在总量已固定后改变额度分配，不能牺牲总使用量。
     objectiveTiers.push(
-      { sense: "Maximize", expression: expectedUtility, name: "expected_utility" },
       { sense: "Maximize", expression: expectedUsage, name: "expected_usage" },
+      ...(input.tasks.length ? [{ sense: "Maximize" as const, expression: expectedUtility, name: "expected_utility" }] : []),
       { sense: "Minimize", expression: expectedEarly, name: "expected_early" },
       { sense: "Minimize", expression: expectedCards, name: "expected_cards" }
     );
   } else {
-    const worstUtility = builder.addContinuous("worst_utility", 0);
+    if (scenarios.length === 1) {
+      // 单情景直接使用原表达式，省去没有意义的 worst_* 辅助变量和重复期望策略。
+      objectiveTiers.push(
+        { sense: "Maximize", expression: usageByScenario[0], name: "deterministic_usage" },
+        ...(input.tasks.length ? [{ sense: "Maximize" as const, expression: utilityByScenario[0], name: "deterministic_utility" }] : []),
+        { sense: "Minimize", expression: earlyByScenario[0], name: "deterministic_early" },
+        { sense: "Minimize", expression: cardsByScenario[0], name: "deterministic_cards" }
+      );
+    } else {
+    const worstUtility = input.tasks.length ? builder.addContinuous("worst_utility", 0) : null;
     const worstUsage = builder.addContinuous("worst_usage", 0);
     const worstEarly = builder.addContinuous("worst_early", 0);
     const worstCards = builder.addContinuous("worst_cards", 0);
+    const allScenarioUsage = expression();
     scenarios.forEach((_scenario, scenarioIndex) => {
-      const utilityBound = expression([[worstUtility, 1]]);
-      addExpression(utilityBound, utilityByScenario[scenarioIndex], -1);
-      builder.addConstraint(`worst_u_s${scenarioIndex}`, utilityBound, "<=", 0);
+      if (worstUtility) {
+        const utilityBound = expression([[worstUtility, 1]]);
+        addExpression(utilityBound, utilityByScenario[scenarioIndex], -1);
+        builder.addConstraint(`worst_u_s${scenarioIndex}`, utilityBound, "<=", 0);
+      }
       const usageBound = expression([[worstUsage, 1]]);
       addExpression(usageBound, usageByScenario[scenarioIndex], -1);
       builder.addConstraint(`worst_y_s${scenarioIndex}`, usageBound, "<=", 0);
+      addExpression(allScenarioUsage, usageByScenario[scenarioIndex]);
       const earlyBound = expression([[worstEarly, 1]]);
       addExpression(earlyBound, earlyByScenario[scenarioIndex], -1);
       builder.addConstraint(`worst_e_s${scenarioIndex}`, earlyBound, ">=", 0);
@@ -377,12 +406,15 @@ export function compilePlanningModel(input: PlannerInput, mode: SolveMode, fullU
       addExpression(cardBound, cardsByScenario[scenarioIndex], -1);
       builder.addConstraint(`worst_c_s${scenarioIndex}`, cardBound, ">=", 0);
     });
+    // 保底值相同时再最大化所有分支总用量，防止有利分支无谓闲置；这不是概率预测。
     objectiveTiers.push(
-      { sense: "Maximize", expression: expression([[worstUtility, 1]]), name: "worst_utility" },
       { sense: "Maximize", expression: expression([[worstUsage, 1]]), name: "worst_usage" },
+      { sense: "Maximize", expression: allScenarioUsage, name: "all_scenario_usage" },
+      ...(worstUtility ? [{ sense: "Maximize" as const, expression: expression([[worstUtility, 1]]), name: "worst_utility" }] : []),
       { sense: "Minimize", expression: expression([[worstEarly, 1]]), name: "worst_early" },
       { sense: "Minimize", expression: expression([[worstCards, 1]]), name: "worst_cards" }
     );
+    }
   }
 
   const estimatedVariables = builder.variableCount();
